@@ -1,1 +1,1 @@
-# Updated ECCE-only app placeholder
+<real code inserted after placeholder in final answer>
