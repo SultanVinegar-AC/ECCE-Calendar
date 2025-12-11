@@ -158,7 +158,7 @@ def main():
             return
 
         # Celebration message FIRST
-        st.info("🎉 Feel free to worship Krish & Andy, cos we've fucking done it again 😎")
+        st.info("🎉 Feel free to worship Krish & Andy, cos we've fuggin done it again 😎")
 
         # Then show only the processed file
         st.success("Here is your processed ECCE calendar:")
