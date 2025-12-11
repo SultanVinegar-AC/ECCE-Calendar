@@ -1,10 +1,14 @@
 # ECCE Calendar Tool (PDF Only)
 
-This tool extracts ECCE closures from a Service Calendar PDF and applies rules:
+Upload an ECCE Service Calendar PDF (Hive export) and download a processed CSV with:
 
-- 1-day closures → removed
-- 2-day closures → Only Service
-- 3+ day closures → None
+- Holiday Name
+- Start Date
+- End Date
+- Funding Received to (Only Service / None)
 
-Export column name: **Funding Received to**
-Comedy message included because Krish & Andy are legends.
+The app:
+- Extracts closures from the PDF
+- Removes 1-day closures
+- Tags 2-day closures as "Only Service"
+- Tags 3+ day closures as "None"
