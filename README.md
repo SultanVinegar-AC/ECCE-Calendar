@@ -1,8 +1,10 @@
 # ECCE Calendar Tool (PDF Only)
 
-Upload an ECCE Service Calendar PDF (Hive export) and download a processed CSV with:
+This tool extracts ECCE closures from a Service Calendar PDF and applies rules:
 
-- Holiday Name
-- Start Date
-- End Date
-- Funding Assigned To (Only Service / None)
+- 1-day closures → removed
+- 2-day closures → Only Service
+- 3+ day closures → None
+
+Export column name: **Funding Received to**
+Comedy message included because Krish & Andy are legends.
