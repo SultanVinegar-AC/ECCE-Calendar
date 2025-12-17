@@ -205,11 +205,14 @@ def process_funding_calendar(df: pd.DataFrame, date_format: str = "%d/%m/%Y") ->
     df["__days"] = (df["__end_dt"] - df["__start_dt"]).dt.days + 1
 
     def funding_rule(days: int, is_bank_holiday: bool):
-        # If it's a single-day closure but it's a public holiday, keep it and label it.
+        # Bank holidays only affect whether we KEEP the row, not the funding value.
+        # 1-day closures: keep only if it is a public holiday.
         if days == 1:
-            return "Bank Holiday" if is_bank_holiday else None
+            return "Only Service" if is_bank_holiday else None
+        # 2-day closures: keep.
         if days == 2:
             return "Only Service"
+        # 3+ day closures: keep, but mark as None (existing behaviour).
         return "None"
 
     # Determine which 1-day closures are actually bank holidays (via OpenHolidays)
