@@ -291,7 +291,7 @@ def main():
     st.write(
         "Upload an ECCE Service Calendar PDF and I'll:\n"
         "- Extract closures automatically\n"
-        "- Remove 1-day closures\n"
+        "- Remove Bank Holiday closures\n"
         "- Tag 2-day closures as 'Only Service'\n"
         "- Tag 3+ day closures as 'None'\n"
         "Then you can download a processed CSV."
