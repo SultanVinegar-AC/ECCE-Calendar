@@ -1,11 +1,6 @@
 
 import io
 import re
-import json
-from datetime import date, datetime, timedelta
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
 import pandas as pd
 import streamlit as st
@@ -77,109 +72,6 @@ def parse_ecce_pdf_to_df(pdf_bytes: bytes, date_format: str = "%d/%m/%Y") -> pd.
     return pd.DataFrame(rows, columns=["Holiday Name", "Start Date", "End Date"])
 
 
-
-# ---------------------------------------------------
-#  OPENHOLIDAYS (Public Holidays) HELPERS
-# ---------------------------------------------------
-
-@st.cache_data(show_spinner=False, ttl=60 * 60 * 24)  # cache for 24h
-def fetch_openholidays_public_holidays_ie(valid_from: str, valid_to: str, language_iso_code: str = "EN") -> dict:
-    """Fetch Irish public holidays from OpenHolidays API for a given date range.
-
-    valid_from / valid_to: YYYY-MM-DD
-    Returns: dict[date_iso (YYYY-MM-DD)] = holiday_name
-    """
-    base_url = "https://openholidaysapi.org/PublicHolidays"
-    params = {
-        "countryIsoCode": "IE",
-        "languageIsoCode": language_iso_code,
-        "validFrom": valid_from,
-        "validTo": valid_to,
-    }
-    url = f"{base_url}?{urlencode(params)}"
-    req = Request(url, headers={"accept": "text/json"})
-
-    try:
-        with urlopen(req, timeout=20) as resp:
-            payload = resp.read().decode("utf-8")
-            data = json.loads(payload)
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as e:
-        # Bubble up a clean exception for the UI layer
-        raise RuntimeError(f"OpenHolidays API request failed: {e}")
-
-    holidays = {}
-
-    for item in data or []:
-        # Dates can appear in slightly different shapes; handle common variants defensively
-        start_raw = item.get("startDate") or item.get("start") or item.get("date")
-        end_raw = item.get("endDate") or item.get("end") or start_raw
-
-        # Sometimes startDate/endDate might be nested objects
-        if isinstance(start_raw, dict):
-            start_raw = start_raw.get("date") or start_raw.get("value")
-        if isinstance(end_raw, dict):
-            end_raw = end_raw.get("date") or end_raw.get("value")
-
-        if not start_raw:
-            continue
-
-        # Name can be a string or a list of translations
-        name = item.get("name") or item.get("holidayName") or item.get("title") or "Bank Holiday"
-        if isinstance(name, list) and name:
-            # Try to find EN translation first
-            en = next((n for n in name if isinstance(n, dict) and (n.get("language") == "EN" or n.get("languageIsoCode") == "EN")), None)
-            picked = en or name[0]
-            if isinstance(picked, dict):
-                name = picked.get("text") or picked.get("name") or picked.get("value") or "Bank Holiday"
-            else:
-                name = str(picked)
-        elif isinstance(name, dict):
-            name = name.get("text") or name.get("name") or name.get("value") or "Bank Holiday"
-        else:
-            name = str(name)
-
-        try:
-            start_dt = datetime.strptime(str(start_raw), "%Y-%m-%d").date()
-            end_dt = datetime.strptime(str(end_raw), "%Y-%m-%d").date()
-        except ValueError:
-            # If the API ever returns a datetime string, try slicing the date part
-            try:
-                start_dt = datetime.strptime(str(start_raw)[:10], "%Y-%m-%d").date()
-                end_dt = datetime.strptime(str(end_raw)[:10], "%Y-%m-%d").date()
-            except ValueError:
-                continue
-
-        # Expand multi-day holidays to individual dates (rare but safe)
-        cur = start_dt
-        while cur <= end_dt:
-            holidays[cur.isoformat()] = name
-            cur = cur + timedelta(days=1)
-
-    return holidays
-
-
-def calendar_range_for_openholidays(df: pd.DataFrame, date_format: str) -> tuple[str, str]:
-    """Return (valid_from, valid_to) as YYYY-MM-DD.
-
-    valid_from = earliest Start Date in the uploaded calendar
-    valid_to   = 31 Dec of the year containing the last End Date in the uploaded calendar
-    """
-    tmp = df.copy()
-    tmp["__start_dt"] = pd.to_datetime(tmp["Start Date"], format=date_format, errors="coerce")
-    tmp["__end_dt"] = pd.to_datetime(tmp["End Date"], format=date_format, errors="coerce")
-    tmp = tmp.dropna(subset=["__start_dt", "__end_dt"])
-
-    if tmp.empty:
-        # Safe fallback: current year window
-        today = date.today()
-        return today.replace(month=1, day=1).isoformat(), today.replace(month=12, day=31).isoformat()
-
-    min_start = tmp["__start_dt"].min().date()
-    max_end = tmp["__end_dt"].max().date()
-    end_of_year = date(max_end.year, 12, 31)
-
-    return min_start.isoformat(), end_of_year.isoformat()
-
 # ---------------------------------------------------
 #  ECCE FUNDING LOGIC
 # ---------------------------------------------------
@@ -204,49 +96,19 @@ def process_funding_calendar(df: pd.DataFrame, date_format: str = "%d/%m/%Y") ->
     # Inclusive day length
     df["__days"] = (df["__end_dt"] - df["__start_dt"]).dt.days + 1
 
-    def funding_rule(days: int, is_bank_holiday: bool):
-        # Bank holidays only affect whether we KEEP the row, not the funding value.
-        # 1-day closures: keep only if it is a public holiday.
+    def funding_rule(days: int):
         if days == 1:
-            return "Only Service" if is_bank_holiday else None
-        # 2-day closures: keep.
+            return None
         if days == 2:
             return "Only Service"
-        # 3+ day closures: keep, but mark as None (existing behaviour).
         return "None"
 
-    # Determine which 1-day closures are actually bank holidays (via OpenHolidays)
-    valid_from, valid_to = calendar_range_for_openholidays(df, date_format=date_format)
+    df["Funding Received to"] = df["__days"].apply(funding_rule)
 
-    bank_holidays = {}
-    bank_holiday_lookup = set()
-    try:
-        bank_holidays = fetch_openholidays_public_holidays_ie(valid_from=valid_from, valid_to=valid_to, language_iso_code="EN")
-        bank_holiday_lookup = set(bank_holidays.keys())
-    except RuntimeError as e:
-        # Don't break processing if the API is down; just continue with the original logic
-        st.warning(f"Couldn't fetch bank holidays from OpenHolidays (continuing without the exemption): {e}")
-
-    df["__is_bank_holiday"] = df["__start_dt"].dt.date.astype(str).isin(bank_holiday_lookup) & (df["__days"] == 1)
-
-    df["Funding Received to"] = [
-        funding_rule(int(d), bool(is_bh)) for d, is_bh in zip(df["__days"], df["__is_bank_holiday"])
-    ]
-
-    # Remove non-bank-holiday 1-day closures (where rule returned None)
+    # Remove 1-day closures (where rule returned None)
     df = df[df["Funding Received to"].notna()]
 
-    # If it's a bank holiday, replace Holiday Name with Bank Holiday - <name> (nice + explicit)
-    if bank_holidays:
-        def _maybe_label_bank_holiday(row):
-            if row.get("__is_bank_holiday"):
-                iso = row["__start_dt"].date().isoformat()
-                bh_name = bank_holidays.get(iso, "Bank Holiday")
-                return f"Bank Holiday - {bh_name}"
-            return row["Holiday Name"]
-
-        df["Holiday Name"] = df.apply(_maybe_label_bank_holiday, axis=1)
-# Format dates back to strings
+    # Format dates back to strings
     df["Start Date"] = df["__start_dt"].dt.strftime(date_format)
     df["End Date"] = df["__end_dt"].dt.strftime(date_format)
 
